@@ -1,0 +1,861 @@
+# Loading Packages------
+  library("rjags")
+  library("dplyr")
+  library("reshape2")
+  library("knitr")
+  library("ggplot2")
+  library("stringr")
+  library("car")
+  library("ggpattern")
+  
+  # Preparing Data-----
+  set.seed(101)
+  # data <- read.csv("C:/Users/hayke/OneDrive/Desktop/THESIS/ChampionshipResults.csv")
+  data <- read.csv("C:/Users/hayke/OneDrive/Desktop/THESIS/data+code/results.csv")
+  
+  # TO KEEP ONLY MOTOGP results from 2019 to 2021 and removing non finishers.
+  championshipresults <- data %>%
+    filter(year %in% c(2016,2017,2018,2019, 2020, 2021) & category == "MotoGP"& position>0)
+  
+  attach(championshipresults)
+  
+  # Creating proportion beaten column
+  championshipresults <- championshipresults%>%
+    group_by(year,circuit_name)%>%
+    mutate(proportion_beaten = 1- ((position - 1) / (max(position) - 1))) %>%
+    ungroup()
+  
+  # Changing team names to keep consistency
+  championshipresults <- championshipresults %>%
+    mutate(team_name = case_when(
+      team_name == "Aprilia Racing" ~ "Aprilia Racing Team",
+      team_name == "Aprilia Factory Racing" ~ "Aprilia Racing Team",
+      team_name == "Aprilia Racing Team Gresini" ~ "Aprilia Racing Team",
+      team_name == "Avintia Esponsorama" ~ "Avintia Racing",
+      team_name == "Hublot Reale Avintia" ~ "Avintia Racing",
+      team_name == "Hublot Reale Avintia Racing" ~ "Avintia Racing",
+      team_name == "SKY VR46 Esponsorama" ~ "Avintia Racing",
+      team_name == "SKY VR46 Avintia" ~ "Avintia Racing",
+      team_name == "Reale Avintia Racing" ~ "Avintia Racing",
+      team_name == "Esponsorama Racing" ~ "Avintia Racing",
+      team_name == "Ducati Team" ~ "Ducati Factory Team",
+      team_name == "Ducati Lenovo Team" ~ "Ducati Factory Team",
+      team_name == "Mission Winnow Ducati" ~ "Ducati Factory Team",
+      team_name == "Team Honda HRC" ~ "Repsol Honda Team",
+      team_name == "Honda HRC" ~ "Repsol Honda Team",
+      team_name == "Team HRC" ~ "Repsol Honda Team",
+      team_name == "HRC Team" ~ "Repsol Honda Team",
+      team_name == "LCR Honda" ~ "LCR Honda CASTROL",
+      team_name == "LCR Honda Castrol" ~ "LCR Honda CASTROL",
+      team_name == "LCR Honda Idemitsu" ~ "LCR Honda IDEMITSU",
+      team_name == "Tech 3 KTM Factory Racing" ~ "Red Bull KTM Tech 3",
+      team_name == "Angel Nieto Team" ~ "Aspar Team MotoGP",
+      team_name == "Pull & Bear Aspar Team" ~ "Aspar Team MotoGP",
+      team_name == "Pull&Bear Aspar Team" ~ "Aspar Team MotoGP",
+      team_name == "Estrella Galicia 0,0 Marc VDS" ~ "EG 0,0 Marc VDS",
+      team_name == "OCTO Pramac Racing" ~ "Pramac Racing",
+      team_name == "OCTO Pramac Yakhnich" ~ "Pramac Racing",
+      team_name == "Alma Pramac Racing" ~ "Pramac Racing",
+      team_name == "Monster Energy Yamaha MotoGP" ~ "Yamaha Factory Racing",
+      team_name == "Movistar Yamaha MotoGP" ~ "Yamaha Factory Racing",
+      team_name == "Yamalube Yamaha Factory Racing" ~ "Yamaha Factory Racing",
+      team_name == "Gresini Racing Team" ~ "Gresini Racing MotoGP",
+      team_name == "Prima Pramac Racing" ~ "Pramac Racing",
+      team_name == "Petronas Yamaha SRT" ~ "RNF MotoGP Team",
+      team_name == "WithU Yamaha RNF MotoGP Team" ~ "RNF MotoGP Team",
+      team_name == "CryptoData RNF MotoGP Team" ~ "RNF MotoGP Team",
+      team_name == "CryptoDATA RNF MotoGP Team" ~ "RNF MotoGP Team",
+      team_name == "Team Suzuki Ecstar" ~ "Team SUZUKI ECSTAR",
+      team_name == "Tech3 KTM Factory Racing" ~ "Tech3 Racing",
+      team_name == "GasGas Factory Racing Tech3" ~ "Tech3 Racing",
+      TRUE ~ team_name # Keeps the original value for other cases
+    ))
+  
+  
+  table(championshipresults$rider_name)
+  c(unique(championshipresults$rider_name))
+  
+  
+  # Merging rider,team,manufacturer and year columns
+  championshipresults$rider_year <- paste(championshipresults$year, championshipresults$rider_name, sep = " ")
+  championshipresults$team_year <- paste(championshipresults$year, championshipresults$team_name, sep = " ")
+  championshipresults$bike_year <- paste(championshipresults$year, championshipresults$bike_name, sep = " ")
+  
+  
+  #  TO KEEP RIDERS WHO HAD MORE THAN 4 RACES IN A YEAR
+  championshipresults <- championshipresults %>%
+    group_by(championshipresults$rider_year) %>%
+    filter(n() > 4) %>%
+    ungroup()
+  
+  #  TO KEEP RIDERS WITH MORE THAN 11 RACES IN TOTAL
+  championshipresults <- championshipresults %>%
+    group_by(rider_name) %>%
+    filter(n() > 11) %>%
+    ungroup()
+  
+  # Creating mapping for rider name column
+  rider_name <- factor(championshipresults$rider_name)
+  uniquerider_names <- levels(rider_name)
+  ridernamenumeric_mapping <- match(rider_name, uniquerider_names)
+  ridernamemappingtable <- data.frame(StringValue = rider_name, NumericValue = ridernamenumeric_mapping )
+  colnames(ridernamemappingtable) <- c("rider_name", "Rider_Name_Number")
+  
+  championshipresults <- merge(championshipresults,ridernamemappingtable ,by = "rider_name")
+  championshipresults <- distinct(championshipresults)
+  
+  # Creating mapping for rider year column
+  rider_year <- factor(championshipresults$rider_year)
+  uniquerider_years <- levels(rider_year)
+  rideryearnumeric_mapping <- match(rider_year, uniquerider_years)
+  rideryearmappingtable <- data.frame(StringValue = rider_year, NumericValue = rideryearnumeric_mapping )
+  colnames(rideryearmappingtable) <- c("rider_year", "Rider_Year_Number")
+  
+  championshipresults <- merge(championshipresults,rideryearmappingtable ,by = "rider_year")
+  championshipresults <- distinct(championshipresults)
+  
+  # Creating mapping for team name column
+  team_name <- factor(championshipresults$team_name)
+  uniqueteam_names <- levels(team_name)
+  teamnamenumeric_mapping <- match(team_name, uniqueteam_names)
+  teamnamemappingtable <- data.frame(StringValue = team_name, NumericValue = teamnamenumeric_mapping )
+  colnames(teamnamemappingtable) <- c("team_name", "Team_Name_Number")
+  unique(teamnamemappingtable)
+  
+  championshipresults <- merge(championshipresults,teamnamemappingtable ,by = "team_name")
+  championshipresults <- distinct(championshipresults)
+  
+  # Creating mapping for team year column
+  team_year <- factor(championshipresults$team_year)
+  uniqueteam_years <- levels(team_year)
+  teamyearnumeric_mapping <- match(team_year, uniqueteam_years)
+  teamyearmappingtable <- data.frame(StringValue = team_year, NumericValue = teamyearnumeric_mapping )
+  colnames(teamyearmappingtable) <- c("team_year", "Team_Year_Number")
+  
+  championshipresults <- merge(championshipresults,teamyearmappingtable ,by = "team_year")
+  championshipresults <- distinct(championshipresults)
+  
+  # Creating mapping for bike name column
+  bike_name <- factor(championshipresults$bike_name)
+  uniquebike_names <- levels(bike_name)
+  bikenamenumeric_mapping <- match(bike_name, uniquebike_names)
+  bikenamemappingtable <- data.frame(StringValue = bike_name, NumericValue = bikenamenumeric_mapping )
+  colnames(bikenamemappingtable) <- c("bike_name", "Bike_Name_Number")
+  unique(bikenamemappingtable)
+  
+  championshipresults <- merge(championshipresults,bikenamemappingtable ,by = "bike_name")
+  championshipresults <- distinct(championshipresults)
+  
+  # Creating mapping for bike year column
+  bike_year <- factor(championshipresults$bike_year)
+  uniquebike_years <- levels(bike_year)
+  bikeyearnumeric_mapping <- match(bike_year, uniquebike_years)
+  bikeyearmappingtable <- data.frame(StringValue = bike_year, NumericValue = bikeyearnumeric_mapping )
+  colnames(bikeyearmappingtable) <- c("bike_year", "Bike_Year_Number")
+  
+  championshipresults <- merge(championshipresults,bikeyearmappingtable ,by = "bike_year")
+  championshipresults <- distinct(championshipresults)
+  
+  # Adding 0.01 to values that are 0
+  championshipresults$proportion_beaten[championshipresults$proportion_beaten == 0] <- championshipresults$proportion_beaten[championshipresults$proportion_beaten == 0] + 0.01
+  # Subtracting 0.01 from values that are 1
+  championshipresults$proportion_beaten[championshipresults$proportion_beaten == 1] <- championshipresults$proportion_beaten[championshipresults$proportion_beaten == 1] - 0.01
+  
+  # Exploratory data analysis------
+  bestriders <- championshipresults %>%
+    group_by(rider_name) %>% 
+    summarise(
+      average_value = mean(proportion_beaten, na.rm = TRUE), # Calculate mean, remove NA values
+      count = n() # Count the number of occurrences
+    )
+  bestriderseason <- championshipresults %>%
+    group_by(rider_year) %>% 
+    summarise(
+      average_value = mean(proportion_beaten, na.rm = TRUE), # Calculate mean, remove NA values
+      count = n() # Count the number of occurrences
+    )
+  bestteams<-championshipresults %>%
+    group_by(team_name) %>% 
+    summarise(
+      average_value = mean(proportion_beaten, na.rm = TRUE), # Calculate mean, remove NA values
+      count = n() # Count the number of occurrences
+    )
+  bestmanfacturers <- championshipresults %>%
+    group_by(bike_name) %>% 
+    summarise(
+      average_value = mean(proportion_beaten, na.rm = TRUE), # Calculate mean, remove NA values
+      count = n() # Count the number of occurrences
+    )
+  
+  
+  # Comparing Repsol Honda Riders by Year----
+  repsolhonda <- championshipresults %>%
+    filter(team_name == "Repsol Honda Team")
+  repsolhondaridersaveragebyyear <- repsolhonda %>%
+    group_by(rider_year) %>%
+    summarise(
+      average_value = mean(proportion_beaten, na.rm = TRUE)
+    )
+  repsolhondaridersaveragebyyear$Year <- as.factor(sub(" .*", "", repsolhondaridersaveragebyyear$rider_year))
+  repsolhondaridersaveragebyyear$Rider <- sub("^[0-9]+ ", "", repsolhondaridersaveragebyyear$rider_year)
+  repsolhondaridersaveragebyyear <- repsolhondaridersaveragebyyear %>%
+    mutate(pattern = ifelse(Rider == "Marquez, Marc", "none", "stripe"))
+  ggplot(repsolhondaridersaveragebyyear, aes(x = Year, y = average_value, fill = Rider, pattern = pattern)) +
+    geom_bar_pattern(
+      stat = "identity",
+      position = position_dodge(width = 0.9),
+      pattern_spacing = 0.1,       
+      pattern_angle = 45            
+    ) +
+    facet_grid(. ~ Year, scales = "free_x", space = "free_x", switch = "x") +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      strip.background = element_blank(),
+      strip.placement = "outside",
+      panel.spacing.x = unit(0, "lines"),
+      axis.ticks.x = element_blank(),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank()
+    ) +
+    labs(title = "Repsol Honda rider Performance Comparison", y = "Average Proportion of riders Beaten", x = NULL) +
+    guides(
+      fill = guide_legend(title = "Rider"))
+  
+  # Model 1 code -----
+  
+  model1data <- championshipresults[,c("proportion_beaten","Rider_Name_Number","Rider_Year_Number","Team_Name_Number","Team_Year_Number")]
+  
+  model = "
+  model{
+  for (g in 1:nentries){
+  y[g] ~ dbeta(mu[g]*phi,(1-mu[g])*phi) T(0.001,0.999)
+  y.pred[g] ~ dbeta(mu[g]*phi,(1-mu[g])*phi) T(0.001,0.999)
+  logit(mu[g]) <- beta1[rider[g]] + beta2[rider_seas[g]] + beta3[team[g]] + beta4[team_seas[g]]
+  }
+  
+  #Priors
+  for(r in 1:nrider){
+  beta1[r]~ dnorm(0,tau1[r])
+  }
+  for(rs in 1:nriderseason){
+  beta2[rs]~dnorm(0,tau2[rs])
+  }
+  for(t in 1:nteam){
+  beta3[t]~ dnorm(0,tau3[t])
+  }
+  for(ts in 1:nteamseason){
+  beta4[ts]~dnorm(0,tau4[ts])
+  }
+  
+  #Hyperpriors
+  phi ~ dgamma(0.1,0.1)
+  for(r in 1:nrider){
+  tau1[r] ~ dgamma(0.1,0.1)
+  }
+  for(rs in 1:nriderseason){
+  tau2[rs] ~ dgamma(0.1,0.1)
+  }
+  for(t in 1:nteam){
+  tau3[t] ~ dgamma(0.1,0.1)
+  }
+  for(ts in 1:nteamseason){
+  tau4[ts] ~ dgamma(0.1,0.1)
+  }
+  }
+  "
+  
+  attach(model1data)
+  nentries = nrow(model1data)
+  nrider <- length(unique(Rider_Name_Number))
+  nteam <- length(unique(Team_Name_Number))
+  nriderseason <- length(unique(Rider_Year_Number))
+  nteamseason <- length(unique(Team_Year_Number))
+  
+  
+  datalist1 <- list( 'nentries' = nentries,
+                    'nrider' = nrider,
+                    'nteam' = nteam,
+                    'nriderseason' = nriderseason,
+                    'nteamseason' = nteamseason,
+                    'y' = proportion_beaten,
+                    'rider' = Rider_Name_Number,
+                    'rider_seas' = Rider_Year_Number,
+                    'team' = Team_Name_Number,
+                    'team_seas' = Team_Year_Number )
+  
+  # Choosing Initial Values
+  initial_values1 <- list(beta1=rep(0,nrider),beta2=rep(0,nriderseason),beta3=rep(0,nteam),beta4=rep(0,nteamseason),phi=0.5,y.pred=rep(0.5,nentries))
+  
+  output1 <- jags.model(textConnection(model),
+                        inits= initial_values1,
+                        data = datalist1,
+                        n.chains = 3,
+                        n.adapt = 1000)
+  
+  update(output1, n.burn = 5000)
+  
+  codaSamples1 <- coda.samples(output1 , variable.names=c("beta1", "beta2","beta3","beta4", "phi", "y.pred") , n.iter=10000)
+  gelmandiagmodel1<-gelman.diag(codaSamples1)
+  sorted_psrf <- gelmandiagmodel1$psrf[order(-gelmandiagmodel1$psrf[, "Point est."]), ]
+  sorted_psrf
+  
+  # Bayesian RMSE for team-based model-----
+  #how to calculate Bayesian RMSE estimate for the model
+  #starts here
+  diff<-mat.or.vec(10000,1718)
+  for (i in 1:1718){
+    stringypred<-paste0("y.pred[",i,"]")
+    #diff<-championshipresults$proportion_beaten[i]-(codaSamples1[, "y.pred[i]"][[1]]+codaSamples1[, "y.pred[i]"][[2]]+codaSamples1[, "y.pred[i]"][[3]])/3
+    diff[,i]<-model1data$proportion_beaten[i]-(codaSamples1[, stringypred][[1]]+codaSamples1[, stringypred][[2]]+codaSamples1[, stringypred][[3]])/3
+  }
+  RMSE<-numeric(10000)
+  for (i in 1:10000){
+    RMSE[i]<-sqrt(sum(diff[i,]^2)/1718)
+  }
+  BayesianRMSEEst<-mean(RMSE)
+  print(BayesianRMSEEst)
+  #ends here
+  
+  stats1 <- summary(codaSamples1)
+  
+  # Summary Statistics Model 1-----
+  summarystatsmodel1 <- summary(codaSamples1)
+  hpdIntervalsmodel1 <- HPDinterval(codaSamples1)
+  hpd_low1 <- hpdIntervalsmodel1[[1]][, "lower"]
+  hpd_high1 <- hpdIntervalsmodel1[[1]][, "upper"]
+  hpd_low2 <- hpdIntervalsmodel1[[2]][, "lower"]
+  hpd_high2 <- hpdIntervalsmodel1[[2]][, "upper"]
+  hpd_low3 <- hpdIntervalsmodel1[[3]][, "lower"]
+  hpd_high3 <- hpdIntervalsmodel1[[3]][, "upper"]
+  hpd_low_avg <- (hpd_low1 + hpd_low2 + hpd_low3) / 3
+  hpd_high_avg <- (hpd_high1 + hpd_high2 + hpd_high3) / 3
+  
+  paramsdfmodel1 <- data.frame(
+    Mean = summarystatsmodel1$statistics[, "Mean"],
+    Median = summarystatsmodel1$quantiles[, "50%"],
+    StdDev = summarystatsmodel1$statistics[, "SD"],
+    HPD_Low = hpd_low_avg,
+    HPD_High = hpd_high_avg
+  )
+  
+  # Trace Plots Model 1----
+  plot(codaSamples1[, "beta1[21]"])
+  plot(codaSamples1[, "beta1[6]"])
+  plot(codaSamples1[, "beta2[13]"])
+  plot(codaSamples1[, "beta2[3]"])
+  
+  # rider standings model 1------
+  stats3 <- stats1$quantiles
+  y.preds <- stats3[grep("^y.pred", rownames(stats3)),3]
+  
+  observed_and_predictedmodel1 <- cbind(championshipresults[c("rider_name","team_name","year","sequence","position","points","proportion_beaten")],y.preds)
+  
+  # Creating Points distribution for positions 1 to 15
+  points_distribution <- c(25, 20, 15, 13, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1)
+  
+  # Assigning predicted points based on the rank of y.preds within each race
+  observed_and_predictedmodel1 <- observed_and_predictedmodel1 %>%
+    group_by(year, sequence) %>%
+    mutate(
+      rank_y_preds = rank(-y.preds, ties.method = "min"), # Rank predictions in descending order
+      predicted_points = ifelse(
+        rank_y_preds <= length(points_distribution),
+        points_distribution[rank_y_preds], # Assign points based on rank
+        0 # Assign 0 points for ranks outside the top 15
+      )
+    ) %>%
+    ungroup()
+  
+  # Calculate total actual and predicted points for each rider per year
+  total_points_by_year <- observed_and_predictedmodel1 %>%
+    group_by(rider_name, year) %>%
+    summarise(
+      total_actual_points = sum(points, na.rm = TRUE),
+      total_predicted_points = sum(predicted_points, na.rm = TRUE)
+    ) %>%
+    ungroup()
+  
+  # Determine actual standings based on total actual points
+  actual_standings <- total_points_by_year %>%
+    arrange(year, desc(total_actual_points)) %>%
+    group_by(year) %>%
+    mutate(actual_rank = row_number()) %>%
+    ungroup()
+  
+  # Determine predicted standings based on total predicted points
+  predicted_standings <- total_points_by_year %>%
+    arrange(year, desc(total_predicted_points)) %>%
+    group_by(year) %>%
+    mutate(predicted_rank = row_number()) %>%
+    ungroup()
+  
+  # Combine actual and predicted standings into one dataframe
+  final_standings <- actual_standings %>%
+    left_join(predicted_standings %>% select(rider_name, year, total_predicted_points, predicted_rank), 
+              by = c("rider_name", "year")) %>%
+    arrange(year, actual_rank)
+  
+  final_standings <- final_standings[,c("rider_name","year","total_actual_points","actual_rank","total_predicted_points.x","predicted_rank")]
+  # View the updated final standings with actual and predicted ranks
+  print(final_standings)
+  
+  finalstandings2016 <- final_standings%>%
+    filter(year == "2016")
+  
+  # FOR TEAM STANDINGS-----------
+  total_points_by_yearteam <- observed_and_predictedmodel1 %>%
+    group_by(team_name, year) %>%
+    summarise(
+      total_actual_pointsteam = sum(points, na.rm = TRUE),
+      total_predicted_pointsteam = sum(predicted_points, na.rm = TRUE)
+    ) %>%
+    ungroup()
+  
+  # Determine actual standings based on total actual points
+  actual_standingsteam <- total_points_by_yearteam %>%
+    arrange(year, desc(total_actual_pointsteam)) %>%
+    group_by(year) %>%
+    mutate(actual_rankteam = row_number()) %>%
+    ungroup()
+  
+  # Determine predicted standings based on total predicted points
+  predicted_standingsteam <- total_points_by_yearteam %>%
+    arrange(year, desc(total_predicted_pointsteam)) %>%
+    group_by(year) %>%
+    mutate(predicted_rankteam = row_number()) %>%
+    ungroup()
+  
+  # Combine actual and predicted standings into one dataframe
+  final_standingsteam <- actual_standingsteam %>%
+    left_join(predicted_standingsteam %>% select(team_name, year, total_predicted_pointsteam, predicted_rankteam), 
+              by = c("team_name", "year")) %>%
+    arrange(year, actual_rankteam)
+  
+  final_standingsteam <- final_standingsteam[,c("team_name","year","total_actual_pointsteam","actual_rankteam","total_predicted_pointsteam.x","predicted_rankteam")]
+  # View the updated final standings with actual and predicted ranks
+  print(final_standingsteam)
+  
+  final_standingsteam2016 <- final_standingsteam%>%
+    filter(year==2016)%>%
+    mutate(differenceinrank = abs(actual_rankteam-predicted_rankteam))
+  
+  # Extracting medians for parameters
+  beta1s <- stats3[grep("beta1",rownames(stats3)),3]
+  beta2s <- stats3[grep("beta2",rownames(stats3)),3]
+  beta3s <- stats3[grep("beta3",rownames(stats3)),3]
+  beta4s <- stats3[grep("beta4",rownames(stats3)),3]
+  
+  
+  riderskillallridersallyears <- championshipresults%>%
+    rowwise()%>%
+    mutate(riderskill = beta1s[Rider_Name_Number] + beta2s[Rider_Year_Number])
+  
+  uniqueriderskills <- riderskillallridersallyears %>%
+    distinct(riderskillallridersallyears$Rider_Year_Number, .keep_all = TRUE)
+  
+  uniqueriderskills2016 <- uniqueriderskills%>%
+    filter(year==2016)
+  
+  ggplot(uniqueriderskills2016, aes(x = reorder(rider_name, riderskill), y = riderskill)) +
+    geom_bar(stat = "identity", fill = "steelblue") +
+    coord_flip() +  
+    labs(x = "Rider Name", y = "Rider Skill") +
+    theme_minimal()
+  
+  marquezdovisvinales <- uniqueriderskills%>%
+    filter(rider_name %in% c("Marquez, Marc","Dovizioso, Andrea", "Vinales, Maverick"))
+  
+  marcmarquezriderskillsperyear <- uniqueriderskills %>%
+    filter(rider_name == "Marquez, Marc")
+  
+  ggplot(marquezdovisvinales, aes(x = year, y = riderskill, group = rider_name, color = rider_name)) +
+    geom_line() +
+    geom_point(size = 3) +
+    theme_minimal() +
+    labs(
+         x = "Year",
+         y = "Rider Skill",
+         color = "Rider Name") +
+    scale_x_continuous(breaks = marquezdovisvinales$year)
+  
+  # creating plots for all riders in groups of 6
+  unique_riders <- unique(uniqueriderskills$rider_name)
+  rider_groups <- data.frame(
+    rider_name = unique_riders,
+    group = rep(1:ceiling(length(unique_riders) / 6), each = 6, length.out = length(unique_riders))
+  )
+  uniqueriderskills <- merge(uniqueriderskills, rider_groups, by = "rider_name")
+  
+  unique_groups <- unique(uniqueriderskills$group)
+  for (g in unique_groups) {
+    data_subset <- uniqueriderskills[uniqueriderskills$group == g,]
+    
+    plot <- ggplot(data_subset, aes(x = year, y = riderskill, group = rider_name, color = rider_name)) +
+      geom_line() +
+      geom_point(size = 3) +
+      theme_minimal() +
+      labs(
+        title = paste("Group", g),  
+        x = "Year",
+        y = "Rider Skill",
+        color = "Rider Name") +
+      scale_x_continuous(breaks = unique(data_subset$year))
+    
+    print(plot)
+  }
+  
+
+  
+  # teamskill------
+  teamskills2016 <- championshipresults %>%
+    rowwise() %>%
+    filter(year == 2016) %>%
+    mutate(teamtotalskill = beta3s[Team_Name_Number] + beta4s[Team_Year_Number]) %>%
+    select(team_name, Team_Name_Number, teamtotalskill) %>%
+    distinct(.keep_all = TRUE)
+  
+  ggplot(teamskills2016, aes(x = reorder(team_name, teamtotalskill), y = teamtotalskill)) +
+    geom_bar(stat = "identity", fill = "steelblue") +
+    coord_flip() +  
+    labs(x = "Team Name", y = "Team Skill") +
+    theme_minimal()
+  
+  # Trace Plots for Yamaha Factory Racing and EG 0,0 Marc VDS-----
+  plot(codaSamples1[, "beta3[15]"])
+  plot(codaSamples1[, "beta3[5]"])
+  plot(codaSamples1[, "beta4[11]"])
+  plot(codaSamples1[, "beta4[5]"])
+  
+  teamskillsallyears <- championshipresults%>%
+    rowwise()%>%
+    mutate(teamtotalskill = beta3s[Team_Name_Number]+beta4s[Team_Year_Number])%>%
+    distinct(Team_Year_Number, .keep_all = TRUE)
+  
+  YamahaDucatiSuzuki <- teamskillsallyears%>%
+    filter(team_name %in% c("Yamaha Factory Racing","Ducati Factory Team", "Team SUZUKI ECSTAR"))
+  
+  ggplot(YamahaDucatiSuzuki, aes(x = year, y = teamtotalskill, group = team_name, color = team_name)) +
+    geom_line() +
+    geom_point(size = 3) +
+    theme_minimal() +
+    labs(
+      x = "Year",
+      y = "Team Skill",
+      color = "Team Name") +
+    scale_x_continuous(breaks = YamahaDucatiSuzuki$year)
+  
+  
+  # total skill to compare with rankings-------
+  inverse_logit <- function(x) {
+    return(1 / (1 + exp(-x)))
+  }
+  
+  championshipresults2016 <- championshipresults%>%
+    filter(year==2016)%>%
+    mutate(totalskill = beta1s[Rider_Name_Number]+beta2s[Rider_Year_Number]+beta3s[Team_Name_Number]+beta4s[Team_Year_Number])%>%
+    mutate(mu = inverse_logit(totalskill))
+  
+  totaloverallskillmodel1 <- championshipresults2016[,c("rider_name","mu")]
+  totaloverallskillmodel1 <- totaloverallskillmodel1 %>%
+    distinct(rider_name, .keep_all = TRUE) %>%
+    arrange(desc(mu))
+  
+  
+  # MODEL USING MANUFACTURER INSTEAD OF TEAM-------------
+  resultsformodel2 <- championshipresults[,c("Rider_Year_Number","Rider_Name_Number","Bike_Year_Number","Bike_Name_Number","proportion_beaten")]
+  
+  model2 = "
+  model{
+  for (g in 1:nentries){
+  y[g] ~ dbeta(mu[g]*phi,(1-mu[g])*phi) T(0.001,0.999)
+  y.pred[g] ~ dbeta(mu[g]*phi,(1-mu[g])*phi) T(0.001,0.999)
+  logit(mu[g]) <- beta1[rider[g]] + beta2[rider_seas[g]] + beta3[bike[g]] + beta4[bike_seas[g]]
+  }
+  
+  #Priors
+  for(r in 1:nrider){
+  beta1[r]~ dnorm(0,tau1[r])
+  }
+  for(rs in 1:nriderseason){
+  beta2[rs]~dnorm(0,tau2[rs])
+  }
+  for(b in 1:nbike){
+  beta3[b]~ dnorm(0,tau3[b])
+  }
+  for(bs in 1:nbikeseason){
+  beta4[bs]~dnorm(0,tau4[bs])
+  }
+  
+  #Hyperpriors
+  phi ~ dgamma(0.1,0.1)
+  for(r in 1:nrider){
+  tau1[r] ~ dgamma(0.1,0.1)
+  }
+  for(rs in 1:nriderseason){
+  tau2[rs] ~ dgamma(0.1,0.1)
+  }
+  for(b in 1:nbike){
+  tau3[b] ~ dgamma(0.1,0.1)
+  }
+  for(bs in 1:nbikeseason){
+  tau4[bs] ~ dgamma(0.1,0.1)
+  }
+  }
+  "
+  attach(resultsformodel2)
+  nentries = nrow(resultsformodel2)
+  nrider <- length(unique(Rider_Name_Number))
+  nbike <- length(unique(Bike_Name_Number))
+  nriderseason <- length(unique(Rider_Year_Number))
+  nbikeseason <- length(unique(Bike_Year_Number))
+  
+  
+  datalist2 <- list( 'nentries' = nentries,
+                    'nrider' = nrider,
+                    'nbike' = nbike,
+                    'nriderseason' = nriderseason,
+                    'nbikeseason' = nbikeseason,
+                    'y' = proportion_beaten,
+                    'rider' = Rider_Name_Number,
+                    'rider_seas' = Rider_Year_Number,
+                    'bike' = Bike_Name_Number,
+                    'bike_seas' = Bike_Year_Number )
+  
+  # Choosing Initial Values
+  initial_values2 <- list(beta1=rep(0,nrider),beta2=rep(0,nriderseason),beta3=rep(0,nbike),beta4=rep(0,nbikeseason),phi=0.5,y.pred=rep(0.5,nentries))
+  
+  output2 <- jags.model(textConnection(model2),
+                        inits= initial_values2,
+                        data = datalist2,
+                        n.chains = 3,
+                        n.adapt = 1000)
+  
+  update(output2, n.burn = 5000)
+  
+  codaSamples2 <- coda.samples(output2 , variable.names=c("beta1", "beta2","beta3","beta4", "phi", "y.pred") , n.iter=10000)
+  
+  #how to calculate Bayesian RMSE estimate for the model
+  #starts here
+  diffmodel2<-mat.or.vec(10000,1718)
+  for (i in 1:1718){
+    stringypred<-paste0("y.pred[",i,"]")
+    #diff<-championshipresults$proportion_beaten[i]-(codaSamples1[, "y.pred[i]"][[1]]+codaSamples1[, "y.pred[i]"][[2]]+codaSamples1[, "y.pred[i]"][[3]])/3
+    diffmodel2[,i]<-championshipresults$proportion_beaten[i]-(codaSamples2[, stringypred][[1]]+codaSamples2[, stringypred][[2]]+codaSamples2[, stringypred][[3]])/3
+  }
+  RMSEmodel2<-numeric(10000)
+  for (i in 1:10000){
+    RMSEmodel2[i]<-sqrt(sum(diff[i,]^2)/1718)
+  }
+  BayesianRMSEEstmodel2<-mean(RMSEmodel2)
+  print(BayesianRMSEEstmodel2)
+  #ends here
+  
+  gelman.diag(codaSamples2)
+  
+  # summary statistics for manufacturer based model
+  summarystatsmodel2 <- summary(codaSamples2)
+  hpdIntervalsmodel2 <- HPDinterval(codaSamples2)
+  hpd_low1model2 <- hpdIntervalsmodel2[[1]][, "lower"]
+  hpd_high1model2 <- hpdIntervalsmodel2[[1]][, "upper"]
+  hpd_low2model2 <- hpdIntervalsmodel2[[2]][, "lower"]
+  hpd_high2model2 <- hpdIntervalsmodel2[[2]][, "upper"]
+  hpd_low3model2 <- hpdIntervalsmodel2[[3]][, "lower"]
+  hpd_high3model2 <- hpdIntervalsmodel2[[3]][, "upper"]
+  hpd_low_avgmodel2 <- (hpd_low1model2 + hpd_low2model2 + hpd_low3model2) / 3
+  hpd_high_avgmodel2 <- (hpd_high1model2 + hpd_high2model2 + hpd_high3model2) / 3
+  
+  paramsdfmodel2 <- data.frame(
+    Mean = summarystatsmodel2$statistics[, "Mean"],
+    Median = summarystatsmodel2$quantiles[, "50%"],
+    StdDev = summarystatsmodel2$statistics[, "SD"],
+    HPD_Low = hpd_low_avgmodel2,
+    HPD_High = hpd_high_avgmodel2
+  )
+  
+  stats1model2 <- summary(codaSamples2)
+  stats3model2 <- stats1model2$quantiles
+  y.predsmodel2 <- stats3model2[grep("^y.pred", rownames(stats3model2)),3]
+  
+  beta1smodel2 <- stats3model2[grep("beta1",rownames(stats3model2)),3]
+  beta2smodel2 <- stats3model2[grep("beta2",rownames(stats3model2)),3]
+  beta3smodel2 <- stats3model2[grep("beta3",rownames(stats3model2)),3]
+  beta4smodel2 <- stats3model2[grep("beta4",rownames(stats3model2)),3]
+  
+  riderskillsmodel2 <- championshipresults%>%
+    rowwise()%>%
+    mutate(riderskill = beta1smodel2[Rider_Name_Number] + beta2smodel2[Rider_Year_Number])
+  
+  riderskillsmodel22016 <- riderskillsmodel2%>%
+    filter(year==2016,.keep_all=TRUE)%>%
+    distinct(Rider_Name_Number,.keep_all=TRUE)
+  
+  
+  riderskillsmodel22016 <- riderskillsmodel22016[,c("rider_name","riderskill")]
+  ggplot(riderskillsmodel22016, aes(x = reorder(rider_name, riderskill), y = riderskill)) +
+    geom_bar(stat = "identity", fill = "slateblue3") +
+    coord_flip() +  
+    labs(x = "Rider Name", y = "Rider Skill") +
+    theme_minimal()
+  
+  
+  #Dovizioso, Andrea
+  plot(codaSamples2[, "beta1[10]"])
+  plot(codaSamples2[, "beta2[6]"])
+  
+  manufacturerskills <- championshipresults%>%
+    rowwise()%>%
+    mutate(manufacturerskill = beta3smodel2[Bike_Name_Number] + beta4smodel2[Bike_Year_Number])
+  
+  manufacturerskills2016 <- manufacturerskills%>%
+    filter(year==2016,.keep_all=TRUE)%>%
+    distinct(Bike_Name_Number,.keep_all=TRUE)
+  
+  ggplot(manufacturerskills2016, aes(x = reorder(bike_name, manufacturerskill), y = manufacturerskill)) +
+    geom_bar(stat = "identity", fill = "royalblue2") +
+    coord_flip() + 
+    labs(x = "Manufacturer", y = "Skill") +
+    theme_minimal()
+  
+  uniquemanufacturerskillsall <- manufacturerskills%>%
+    distinct(Bike_Year_Number,.keep_all=TRUE)
+  
+  ggplot(uniquemanufacturerskillsall, aes(x = year, y = manufacturerskill, group = bike_name, color = bike_name)) +
+    geom_line() +
+    geom_point(size = 3) +
+    theme_minimal() +
+    labs(
+      x = "Year",
+      y = "Skill",
+      color = "Manufacturer") +
+    scale_x_continuous(breaks = uniquemanufacturerskillsall$year)
+  
+  
+  # suzukitraceplots
+  plot(codaSamples2[, "beta3[2]"])
+  plot(codaSamples2[, "beta4[2]"])
+  
+  championshipresults2016model2 <- championshipresults%>%
+    filter(year==2016)%>%
+    mutate(totalskill = beta1smodel2[Rider_Name_Number]+beta2smodel2[Rider_Year_Number]+beta3smodel2[Bike_Name_Number]+beta4smodel2[Bike_Year_Number])%>%
+    mutate(mu = inverse_logit(totalskill))
+  
+  totaloverallskillmodel2 <- championshipresults2016model2[,c("rider_name","mu")]
+  totaloverallskillmodel2 <- totaloverallskillmodel2 %>%
+    distinct(rider_name, .keep_all = TRUE) %>%
+    arrange(desc(mu))
+  
+  # Creating observed vs predicted rider rankings for model 2----
+  model2rankcheck <- cbind(championshipresults[c("rider_name","bike_name","year","sequence","position","points","proportion_beaten")],y.predsmodel2)
+  
+  # Points distribution for positions 1 to 15
+  points_distribution <- c(25, 20, 15, 13, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1)
+  
+  # Assigning predicted points based on the rank of y.preds within each race
+  model2rankcheck <- model2rankcheck %>%
+    group_by(year, sequence) %>%
+    mutate(
+      rank_y_predsmodel2 = rank(-y.predsmodel2, ties.method = "min"), # Rank predictions in descending order
+      predicted_pointsmodel2 = ifelse(
+        rank_y_predsmodel2 <= length(points_distribution),
+        points_distribution[rank_y_predsmodel2], # Assign points based on rank
+        0 # Assign 0 points for ranks outside the top 15
+      )
+    ) %>%
+    ungroup()
+  
+  # Calculate total actual and predicted points for each rider per year
+  total_points_by_yearmodel2 <- model2rankcheck %>%
+    group_by(rider_name, year) %>%
+    summarise(
+      total_actual_points = sum(points, na.rm = TRUE),
+      total_predicted_pointsmodel2 = sum(predicted_pointsmodel2, na.rm = TRUE)
+    ) %>%
+    ungroup()
+  
+  # Determine actual standings based on total actual points
+  actual_standings <- total_points_by_year %>%
+    arrange(year, desc(total_actual_points)) %>%
+    group_by(year) %>%
+    mutate(actual_rank = row_number()) %>%
+    ungroup()
+  
+  # Determine predicted standings based on total predicted points
+  predicted_standingsmodel2 <- total_points_by_yearmodel2 %>%
+    arrange(year, desc(total_predicted_pointsmodel2)) %>%
+    group_by(year) %>%
+    mutate(predicted_rankmodel2 = row_number()) %>%
+    ungroup()
+  
+  # Combine actual and predicted standings into one dataframe
+  final_standingsmodel2 <- actual_standings %>%
+    left_join(predicted_standingsmodel2 %>% select(rider_name, year, total_predicted_pointsmodel2, predicted_rankmodel2), 
+              by = c("rider_name", "year")) %>%
+    arrange(year, actual_rank)
+  
+  final_standingsmodel2 <- final_standingsmodel2[,c("rider_name","year","total_actual_points","actual_rank","total_predicted_pointsmodel2","predicted_rankmodel2")]
+  # View the updated final standings with actual and predicted ranks
+  print(final_standingsmodel2)
+  
+  
+  # Comparing rider standings between models-----
+  final_standings <- final_standings%>%
+    rowwise()%>%
+    mutate(difference = abs(actual_rank-predicted_rank))
+  sum(final_standings$difference)
+  
+  final_standingsmodel2 <- final_standingsmodel2%>%
+    rowwise()%>%
+    mutate(difference = abs(actual_rank-predicted_rankmodel2))
+  sum(final_standingsmodel2$difference)
+  
+  
+  finalstandings2016model1 <- final_standings%>%
+    filter(year==2016) %>%
+    rename(predicted_rank_1 = "predicted_rank", predicted_points_1 = "total_predicted_points.x")
+  
+  finalstandings2016model2 <- final_standingsmodel2%>%
+    filter(year==2016) %>%
+    rename(predicted_rank_2 = "predicted_rankmodel2", predicted_points_2 = "total_predicted_pointsmodel2") 
+  
+  standings2016bothmodels <- final_df <- left_join(finalstandings2016model1, finalstandings2016model2, by = c("rider_name", "year"))
+  
+  standings2016bothmodels<- standings2016bothmodels[,c("rider_name","actual_rank.x","total_actual_points.x","predicted_points_1","predicted_rank_1","predicted_points_2","predicted_rank_2")]
+  
+  # Manufacturer Standings----
+  # Calculate total actual and predicted points for each manufacturer per year
+  total_points_by_yearmodel2manufacturer <- model2rankcheck %>%
+    group_by(bike_name, year) %>%
+    summarise(
+      total_actual_pointsmanufacturer = sum(points, na.rm = TRUE),
+      total_predicted_pointsmodel2manufacturer = sum(predicted_pointsmodel2, na.rm = TRUE)
+    ) %>%
+    ungroup()
+  
+  # Determine actual standings based on total actual points
+  actual_standingsmanufacturer <- total_points_by_yearmodel2manufacturer %>%
+    arrange(year, desc(total_actual_pointsmanufacturer)) %>%
+    group_by(year) %>%
+    mutate(actual_rankmanufacturer = row_number()) %>%
+    ungroup()
+  
+  # Determine predicted standings based on total predicted points
+  predicted_standingsmodel2manufacturer <- total_points_by_yearmodel2manufacturer %>%
+    arrange(year, desc(total_predicted_pointsmodel2manufacturer)) %>%
+    group_by(year) %>%
+    mutate(predicted_rankmodel2manufacturer = row_number()) %>%
+    ungroup()
+  
+  # Combine actual and predicted standings into one dataframe
+  final_standingsmodel2manufacturer <- actual_standingsmanufacturer %>%
+    left_join(predicted_standingsmodel2manufacturer %>% select(bike_name, year, total_predicted_pointsmodel2manufacturer, predicted_rankmodel2manufacturer), 
+              by = c("bike_name", "year")) %>%
+    arrange(year, actual_rankmanufacturer)
+  
+  final_standingsmodel2manufacturer <- final_standingsmodel2manufacturer[,c("bike_name","year","total_actual_pointsmanufacturer","actual_rankmanufacturer","total_predicted_pointsmodel2manufacturer.x","predicted_rankmodel2manufacturer")]
+  # View the updated final standings with actual and predicted ranks
+  print(final_standingsmodel2manufacturer)
+  
+  # Extracting only 2016 rankings
+  manufacturerstandings2016 <- final_standingsmodel2manufacturer%>%
+    filter(year==2016)
